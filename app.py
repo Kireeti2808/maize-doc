@@ -12,39 +12,57 @@ st.set_page_config(page_title="Maize-Doc", layout="wide")
 
 st.markdown("""
     <style>
+    /* Force high contrast text colors */
+    .stMarkdown, p, span, h1, h2, h3, h4, li {
+        color: #1a1a1a !important;
+    }
+    
     .stButton>button {
         border-radius: 20px;
-        background-color: #4CAF50;
-        color: white;
+        background-color: #2e7d32;
+        color: white !important;
         font-weight: bold;
         border: none;
         padding: 10px 25px;
         width: 100%;
     }
+    
     img { border-radius: 15px; }
+
     .weather-card {
-        background: linear-gradient(135deg, #e8f5e9 0%, #ffffff 100%);
+        background-color: #ffffff !important;
+        background: linear-gradient(135deg, #f1f8e9 0%, #ffffff 100%) !important;
         border-radius: 20px;
         padding: 20px;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+        box-shadow: 0 4px 10px rgba(0,0,0,0.1);
         border: 1px solid #c8e6c9;
         margin-bottom: 20px;
         text-align: center;
     }
+
     .quadrant-box {
-        background-color: #ffffff;
-        border: 1px solid #eeeeee;
+        background-color: #ffffff !important;
+        border: 2px solid #e0e0e0;
         border-radius: 12px;
         padding: 15px;
         margin-bottom: 15px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     }
+
     .advice-box {
-        background-color: #f0f7ff;
-        border-left: 6px solid #007bff;
-        padding: 20px;
+        background-color: #ffffff !important;
+        border-left: 8px solid #01579b;
+        padding: 25px;
         border-radius: 10px;
         margin-top: 20px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        color: #012d3a !important;
+    }
+    
+    /* Small labels inside boxes */
+    small {
+        color: #555555 !important;
+        font-weight: bold;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -77,14 +95,11 @@ def get_weather(city):
         geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={city}&count=1&language=en&format=json"
         geo_res = requests.get(geo_url).json()
         if not geo_res.get('results'): return None
-        
         lat = geo_res['results'][0]['latitude']
         lon = geo_res['results'][0]['longitude']
-        
-        weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,precipitation,weather_code"
+        weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,precipitation"
         w_res = requests.get(weather_url).json()
         current = w_res['current']
-        
         return {
             "temp": f"{current['temperature_2m']}°C",
             "humidity": f"{current['relative_humidity_2m']}%",
@@ -111,12 +126,12 @@ def analyze_quadrants(image, interpreter):
 def get_smart_advice(disease, weed, weather, location):
     try:
         client = openai.OpenAI(api_key=st.secrets["openai_key"])
-        w_info = f"{weather['temp']}, Humidity: {weather['humidity']}" if weather else "Unknown"
+        w_info = f"{weather['temp']}, Humidity: {weather['humidity']}" if weather else "Weather unavailable"
         issue = f"{disease} and {weed}" if (disease and weed) else (disease or weed or "Infection")
         prompt = f"As an Agronomist, provide a treatment plan for Maize in {location}. Issue: {issue}. Weather: {w_info}. Include Diagnosis, Chemical Plan, and Organic Alternative. Use Bold for keys."
         response = client.chat.completions.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}])
         return response.choices[0].message.content
-    except Exception as e: return f"AI Advice unavailable: {e}"
+    except Exception as e: return f"Advice unavailable: {e}"
 
 st.sidebar.title("🌱 Maize-Doc")
 user_city = st.sidebar.text_input("City Name", value="Vellore")
@@ -136,9 +151,9 @@ if uploaded_file:
         if w_data:
             st.markdown(f"""
             <div class="weather-card">
-                <h3>{w_data['icon']} {user_city} Weather</h3>
-                <h2 style="color:#2e7d32; margin:0;">{w_data['temp']}</h2>
-                <p>Humidity: {w_data['humidity']} | Precip: {w_data['precip']}</p>
+                <h3 style="color:#2e7d32 !important;">{w_data['icon']} {user_city} Weather</h3>
+                <h2 style="color:#1b5e20 !important; margin:0; font-size:40px;">{w_data['temp']}</h2>
+                <p style="color:#333 !important; font-weight:bold;">Humidity: {w_data['humidity']} | Precip: {w_data['precip']}</p>
             </div>
             """, unsafe_allow_html=True)
         else:
@@ -156,17 +171,17 @@ if uploaded_file:
                     with q_cols[i%2]:
                         st.image(val['img'], use_column_width=True)
                         lbl, cnf = val['label'], val['conf']
-                        clr = "#2e7d32" if "Healthy" in lbl else ("#fb8c00" if "Weed" in lbl else "#d32f2f")
+                        clr = "#1b5e20" if "Healthy" in lbl else ("#e65100" if "Weed" in lbl else "#b71c1c")
                         
                         st.markdown(f"""
                         <div class="quadrant-box">
-                            <small>{name}</small><br>
-                            <b style="color:{clr}; font-size:16px;">{lbl}</b><br>
-                            <div style="display:flex; align-items:center;">
-                                <div style="flex-grow:1; background:#eeeeee; height:10px; border-radius:5px; margin-right:10px;">
-                                    <div style="width:{cnf}%; background:{clr}; height:10px; border-radius:5px;"></div>
+                            <small style="color:#555 !important;">{name}</small><br>
+                            <b style="color:{clr} !important; font-size:18px;">{lbl}</b><br>
+                            <div style="display:flex; align-items:center; margin-top:5px;">
+                                <div style="flex-grow:1; background:#e0e0e0; height:12px; border-radius:6px; margin-right:10px;">
+                                    <div style="width:{cnf}%; background:{clr}; height:12px; border-radius:6px;"></div>
                                 </div>
-                                <span style="font-size:14px; font-weight:bold;">{cnf:.1f}%</span>
+                                <span style="font-size:14px; font-weight:bold; color:#333 !important;">{cnf:.1f}%</span>
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
@@ -182,6 +197,6 @@ if uploaded_file:
                     if enable_ai:
                         with st.spinner("Generating Treatment Plan..."):
                             advice = get_smart_advice(f_d, f_w, w_data, user_city)
-                            st.markdown(f'<div class="advice-box"><h3>🤖 AI Prescription</h3>{advice.replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
+                            st.markdown(f'<div class="advice-box"><h3 style="color:#01579b !important;">🤖 AI Prescription</h3><div style="color:#1a1a1a !important;">{advice.replace(chr(10), "<br>")}</div></div>', unsafe_allow_html=True)
                 else:
                     st.success("Analysis complete: Your crop is Healthy!")
