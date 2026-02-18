@@ -1,4 +1,4 @@
-
+%%writefile maize-doctor/app.py
 import streamlit as st
 import tensorflow as tf
 import numpy as np
@@ -6,6 +6,7 @@ from PIL import Image
 import os
 import openai
 import requests
+import gdown
 
 st.set_page_config(page_title="Maize-Doc", layout="wide")
 
@@ -20,9 +21,7 @@ st.markdown("""
         padding: 10px 25px;
         width: 100%;
     }
-    img {
-        border-radius: 15px;
-    }
+    img { border-radius: 15px; }
     .weather-card {
         background: linear-gradient(135deg, #e0f7fa 0%, #ffffff 100%);
         border-radius: 25px;
@@ -35,16 +34,8 @@ st.markdown("""
         justify-content: space-around;
         margin-bottom: 20px;
     }
-    .weather-icon {
-        font-size: 45px;
-        margin-right: 15px;
-    }
-    .weather-temp {
-        font-size: 32px;
-        font-weight: 800;
-        margin: 0;
-        color: #00796b;
-    }
+    .weather-icon { font-size: 45px; margin-right: 15px; }
+    .weather-temp { font-size: 32px; font-weight: 800; margin: 0; color: #00796b; }
     .result-box {
         background-color: #ffffff;
         border: 1px solid #f0f0f0;
@@ -70,10 +61,17 @@ CORN_CLASSES = ['Maize_Blight', 'Maize_Common_Rust', 'Maize_Gray_Leaf_Spot', 'Ma
 
 @st.cache_resource
 def load_model():
-    filename = 'models/maize_model.tflite'
+    filename = 'maize_model.tflite'
+    
     if not os.path.exists(filename):
-        st.error(f"Model file not found: {filename}")
+        file_id = '1_1PcQqUFFiK9tgpXwivM6J7OJShL18jk'
+        url = f'https://drive.google.com/uc?id={file_id}'
+        gdown.download(url, filename, quiet=False)
+
+    if not os.path.exists(filename):
+        st.error("Model download failed.")
         return None
+
     interpreter = tf.lite.Interpreter(model_path=filename)
     interpreter.allocate_tensors()
     return interpreter
@@ -85,7 +83,7 @@ def predict_image(image, interpreter):
     img = image.resize((224, 224))
     img_array = np.array(img, dtype=np.float32)
     img_array = np.expand_dims(img_array, axis=0)
-    img_array = tf.keras.applications.efficientnet_v2.preprocess_input(img_array)
+    img_array = tf.keras.applications.efficientnet.preprocess_input(img_array)
 
     interpreter.set_tensor(input_details[0]['index'], img_array)
     interpreter.invoke()
@@ -94,7 +92,7 @@ def predict_image(image, interpreter):
 def get_weather_emoji(condition):
     condition = condition.lower()
     if "sun" in condition or "clear" in condition: return "☀️"
-    elif "rain" in condition or "shower" in condition or "drizzle" in condition: return "🌧️"
+    elif "rain" in condition or "shower" in condition: return "🌧️"
     elif "cloud" in condition: return "☁️"
     elif "storm" in condition or "thunder" in condition: return "⛈️"
     elif "snow" in condition: return "❄️"
