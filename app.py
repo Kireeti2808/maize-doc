@@ -23,33 +23,28 @@ st.markdown("""
     }
     img { border-radius: 15px; }
     .weather-card {
-        background: linear-gradient(135deg, #e0f7fa 0%, #ffffff 100%);
+        background: linear-gradient(135deg, #e8f5e9 0%, #ffffff 100%);
         border-radius: 20px;
-        padding: 15px;
+        padding: 20px;
         box-shadow: 0 4px 10px rgba(0,0,0,0.05);
-        border: 1px solid #b2ebf2;
-        color: #333;
-        display: flex;
-        align-items: center;
-        justify-content: space-around;
+        border: 1px solid #c8e6c9;
         margin-bottom: 20px;
+        text-align: center;
     }
-    .weather-temp { font-size: 28px; font-weight: 800; color: #00796b; margin: 0; }
     .quadrant-box {
         background-color: #ffffff;
-        border: 1px solid #f0f0f0;
+        border: 1px solid #eeeeee;
         border-radius: 12px;
-        padding: 12px;
+        padding: 15px;
         margin-bottom: 15px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
     }
     .advice-box {
-        background-color: #f1f8ff;
-        border-left: 6px solid #0056b3;
+        background-color: #f0f7ff;
+        border-left: 6px solid #007bff;
         padding: 20px;
         border-radius: 10px;
         margin-top: 20px;
-        color: #002d5a;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -61,8 +56,7 @@ def load_model():
     filename = 'maize_model.tflite'
     if not os.path.exists(filename):
         file_id = '1_1PcQqUFFiK9tgpXwivM6J7OJShL18jk'
-        url = f'https://drive.google.com/uc?id={file_id}'
-        gdown.download(url, filename, quiet=False)
+        gdown.download(f'https://drive.google.com/uc?id={file_id}', filename, quiet=False)
     interpreter = tf.lite.Interpreter(model_path=filename)
     interpreter.allocate_tensors()
     return interpreter
@@ -78,29 +72,26 @@ def predict_image(image, interpreter):
     interpreter.invoke()
     return interpreter.get_tensor(output_details[0]['index'])[0]
 
-def get_weather(location):
-    if not location: return None
+def get_weather(city):
     try:
-        # Using a more direct format to avoid JSON parsing errors if API is slow
-        url = f"https://wttr.in/{location}?format=%t|%h|%p|%C"
-        headers = {'User-Agent': 'curl/7.64.1'}
-        response = requests.get(url, headers=headers, timeout=8)
-        if response.status_code == 200 and "|" in response.text:
-            data = response.text.split("|")
-            temp = data[0].strip()
-            # Safety check for temperature unit
-            if "F" in temp:
-                 val = float(''.join(filter(str.isdigit, temp)))
-                 temp = f"{int((val - 32) * 5/9)}°C"
-            return {
-                "temp": temp,
-                "humidity": data[1].strip(),
-                "precip": data[2].strip(),
-                "condition": data[3].strip(),
-                "icon": "🌤️"
-            }
+        geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={city}&count=1&language=en&format=json"
+        geo_res = requests.get(geo_url).json()
+        if not geo_res.get('results'): return None
+        
+        lat = geo_res['results'][0]['latitude']
+        lon = geo_res['results'][0]['longitude']
+        
+        weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,precipitation,weather_code"
+        w_res = requests.get(weather_url).json()
+        current = w_res['current']
+        
+        return {
+            "temp": f"{current['temperature_2m']}°C",
+            "humidity": f"{current['relative_humidity_2m']}%",
+            "precip": f"{current['precipitation']}mm",
+            "icon": "🌤️" if current['precipitation'] == 0 else "🌧️"
+        }
     except: return None
-    return None
 
 def analyze_quadrants(image, interpreter):
     w, h = image.size; mid_w, mid_h = w // 2, h // 2
@@ -120,47 +111,44 @@ def analyze_quadrants(image, interpreter):
 def get_smart_advice(disease, weed, weather, location):
     try:
         client = openai.OpenAI(api_key=st.secrets["openai_key"])
-        w_txt = f"{weather['temp']}, Hum: {weather['humidity']}" if weather else "Local weather unknown"
-        issue = f"{disease} and {weed}" if (disease and weed) else (disease or weed or "Maize Crop")
-        prompt = f"Expert Agronomist Plan for Maize. Location: {location}. Issue: {issue}. Weather: {w_txt}. Provide: Diagnosis, Action Plan, and Organic Alternative. Bold key terms."
+        w_info = f"{weather['temp']}, Humidity: {weather['humidity']}" if weather else "Unknown"
+        issue = f"{disease} and {weed}" if (disease and weed) else (disease or weed or "Infection")
+        prompt = f"As an Agronomist, provide a treatment plan for Maize in {location}. Issue: {issue}. Weather: {w_info}. Include Diagnosis, Chemical Plan, and Organic Alternative. Use Bold for keys."
         response = client.chat.completions.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}])
         return response.choices[0].message.content
-    except Exception as e: return f"Advice unavailable: {e}"
+    except Exception as e: return f"AI Advice unavailable: {e}"
 
 st.sidebar.title("🌱 Maize-Doc")
-user_location = st.sidebar.text_input("Enter City", value="Vellore")
-enable_ai = st.sidebar.checkbox("AI Prescription", value=True)
+user_city = st.sidebar.text_input("City Name", value="Vellore")
+enable_ai = st.sidebar.checkbox("AI Support", value=True)
 
 st.header("🌽 Maize Health Quadrant Analysis")
-uploaded_file = st.file_uploader("Choose a leaf image...", type=["jpg", "png", "jpeg"])
+uploaded_file = st.file_uploader("Upload Leaf Photo", type=["jpg", "png", "jpeg"])
 
 if uploaded_file:
-    col_img, col_info = st.columns([1.2, 1])
-    with col_img:
+    c1, c2 = st.columns([1.2, 1])
+    with c1:
         img = Image.open(uploaded_file)
-        st.image(img, use_column_width=True, caption="Original Field Sample")
+        st.image(img, use_column_width=True, caption="Sample Image")
     
-    with col_info:
-        w_data = get_weather(user_location)
+    with c2:
+        w_data = get_weather(user_city)
         if w_data:
             st.markdown(f"""
             <div class="weather-card">
-                <div style="font-size:35px;">{w_data['icon']}</div>
-                <div><p class="weather-temp">{w_data['temp']}</p><small>{w_data['condition']}</small></div>
-                <div style="font-size:12px; border-left:1px solid #ccc; padding-left:10px;">
-                    Hum: {w_data['humidity']}<br>Rain: {w_data['precip']}
-                </div>
+                <h3>{w_data['icon']} {user_city} Weather</h3>
+                <h2 style="color:#2e7d32; margin:0;">{w_data['temp']}</h2>
+                <p>Humidity: {w_data['humidity']} | Precip: {w_data['precip']}</p>
             </div>
             """, unsafe_allow_html=True)
         else:
-            st.warning("📡 Weather station busy. Check location name.")
+            st.warning("⚠️ Weather data unavailable for this city.")
 
-        if st.button('🚀 Start Deep Scan'):
-            with st.spinner('Dividing image into quadrants and analyzing...'):
+        if st.button('🚀 Analyze Quadrants'):
+            with st.spinner('Running AI Scan...'):
                 model = load_model()
                 res = analyze_quadrants(img, model)
                 
-                st.subheader("Quadrant Results")
                 q_cols = st.columns(2)
                 d_list, w_list = [], []
 
@@ -168,17 +156,17 @@ if uploaded_file:
                     with q_cols[i%2]:
                         st.image(val['img'], use_column_width=True)
                         lbl, cnf = val['label'], val['conf']
-                        clr = "#28a745" if "Healthy" in lbl else ("#fd7e14" if "Weed" in lbl else "#dc3545")
+                        clr = "#2e7d32" if "Healthy" in lbl else ("#fb8c00" if "Weed" in lbl else "#d32f2f")
                         
                         st.markdown(f"""
                         <div class="quadrant-box">
                             <small>{name}</small><br>
                             <b style="color:{clr}; font-size:16px;">{lbl}</b><br>
                             <div style="display:flex; align-items:center;">
-                                <div style="flex-grow:1; background:#e0e0e0; height:8px; border-radius:4px; margin-right:10px;">
-                                    <div style="width:{cnf}%; background:{clr}; height:8px; border-radius:4px;"></div>
+                                <div style="flex-grow:1; background:#eeeeee; height:10px; border-radius:5px; margin-right:10px;">
+                                    <div style="width:{cnf}%; background:{clr}; height:10px; border-radius:5px;"></div>
                                 </div>
-                                <span style="font-size:12px; font-weight:bold;">{cnf:.1f}%</span>
+                                <span style="font-size:14px; font-weight:bold;">{cnf:.1f}%</span>
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
@@ -191,11 +179,9 @@ if uploaded_file:
                 f_w = max(set(w_list), key=w_list.count) if w_list else None
                 
                 if f_d or f_w:
-                    st.divider()
                     if enable_ai:
-                        with st.spinner("Consulting AI Agronomist..."):
-                            advice = get_smart_advice(f_d, f_w, w_data, user_location)
-                            st.markdown(f'<div class="advice-box"><h3>🤖 Treatment Plan</h3>{advice.replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
+                        with st.spinner("Generating Treatment Plan..."):
+                            advice = get_smart_advice(f_d, f_w, w_data, user_city)
+                            st.markdown(f'<div class="advice-box"><h3>🤖 AI Prescription</h3>{advice.replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
                 else:
-                    st.balloons()
-                    st.success("Analysis complete: Crop is 100% Healthy!")
+                    st.success("Analysis complete: Your crop is Healthy!")
