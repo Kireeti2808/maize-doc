@@ -1,0 +1,8 @@
+streamlit
+tensorflow-cpu
+numpy
+Pillow
+gdown
+openai
+matplotlib
+seaborn
