@@ -1,4 +1,4 @@
-
+%%writefile maize-doctor/app.py
 import streamlit as st
 import tensorflow as tf
 import numpy as np
@@ -8,7 +8,6 @@ import openai
 import requests
 import gdown
 
-# --- PAGE CONFIG ---
 st.set_page_config(page_title="Maize-Doc", layout="wide")
 
 st.markdown("""
@@ -35,13 +34,14 @@ st.markdown("""
         justify-content: space-around;
         margin-bottom: 20px;
     }
+    .weather-temp { font-size: 32px; font-weight: 800; color: #00796b; margin: 0; }
     .result-box {
         background-color: #ffffff;
         border: 1px solid #f0f0f0;
         border-radius: 15px;
-        padding: 20px;
-        text-align: center;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+        padding: 15px;
+        margin-bottom: 10px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.02);
     }
     .advice-box {
         background-color: #e3f2fd;
@@ -50,6 +50,7 @@ st.markdown("""
         border-radius: 15px;
         margin-top: 20px;
         line-height: 1.6;
+        font-size: 16px;
         color: #0d47a1;
     }
     </style>
@@ -57,177 +58,115 @@ st.markdown("""
 
 CORN_CLASSES = ['Maize_Blight', 'Maize_Common_Rust', 'Maize_Gray_Leaf_Spot', 'Maize_Healthy', 'Weed_Broadleaf', 'Weed_Grass']
 
-# --- MODEL LOADING (Auto-Download from Drive) ---
 @st.cache_resource
 def load_model():
-    folder = 'models'
-    filename = os.path.join(folder, 'maize_model.tflite')
-    
-    os.makedirs(folder, exist_ok=True)
-
-    # Always check if model exists, if not download
+    filename = 'maize_model.tflite'
     if not os.path.exists(filename):
         file_id = '1_1PcQqUFFiK9tgpXwivM6J7OJShL18jk'
         url = f'https://drive.google.com/uc?id={file_id}'
-        with st.spinner("Downloading Model from Drive..."):
-            gdown.download(url, filename, quiet=False)
-            
-    try:
-        interpreter = tf.lite.Interpreter(model_path=filename)
-        interpreter.allocate_tensors()
-        return interpreter
-    except Exception as e:
-        st.error(f"Model loading failed: {e}")
-        return None
+        gdown.download(url, filename, quiet=False)
+    interpreter = tf.lite.Interpreter(model_path=filename)
+    interpreter.allocate_tensors()
+    return interpreter
 
 def predict_image(image, interpreter):
     input_details = interpreter.get_input_details()
     output_details = interpreter.get_output_details()
-    
-    # Resize and Preprocess
     img = image.resize((224, 224))
     img_array = np.array(img, dtype=np.float32)
     img_array = np.expand_dims(img_array, axis=0)
-    
-    # EfficientNet Preprocessing (Standard)
-    img_array = tf.keras.applications.efficientnet.preprocess_input(img_array)
-
+    img_array = tf.keras.applications.efficientnet_v2.preprocess_input(img_array)
     interpreter.set_tensor(input_details[0]['index'], img_array)
     interpreter.invoke()
     return interpreter.get_tensor(output_details[0]['index'])[0]
 
-# --- WEATHER FUNCTIONS ---
 def get_weather(location):
     if not location: return None
     try:
-        url = f"https://wttr.in/{location}?format=%t|%h|%p|%C&M"
-        response = requests.get(url, timeout=5)
+        url = f"https://wttr.in/{location}?format=j1"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
-            data = response.text.split("|")
-            temp = data[0].strip()
-            # Convert F to C if needed
-            if "F" in temp:
-                 val = float(''.join(filter(str.isdigit, temp)))
-                 temp = f"{int((val - 32) * 5/9)}°C"
-            
-            # Simple icon mapping
-            cond = data[3].strip().lower()
+            data = response.json()
+            current = data['current_condition'][0]
+            desc = current['weatherDesc'][0]['value']
             icon = "☀️"
-            if "rain" in cond: icon = "🌧️"
-            elif "cloud" in cond: icon = "☁️"
-            
+            if "rain" in desc.lower(): icon = "🌧️"
+            elif "cloud" in desc.lower(): icon = "☁️"
             return {
-                "temp": temp, "humidity": data[1].strip(), 
-                "precip": data[2].strip(), "condition": data[3].strip(), "icon": icon
+                "temp": f"{current['temp_C']}°C",
+                "humidity": f"{current['humidity']}%",
+                "precip": f"{current['precipMM']}mm",
+                "condition": desc,
+                "icon": icon
             }
     except: return None
     return None
 
-# --- AI ADVICE (With Safety Check) ---
-def get_smart_advice(predicted_label, weather, location):
+def analyze_quadrants(image, interpreter):
+    w, h = image.size; mid_w, mid_h = w // 2, h // 2
+    quads = {
+        "Top-Left": image.crop((0, 0, mid_w, mid_h)),
+        "Top-Right": image.crop((mid_w, 0, w, mid_h)),
+        "Bottom-Left": image.crop((0, mid_h, mid_w, h)),
+        "Bottom-Right": image.crop((mid_w, mid_h, w, h))
+    }
+    results = {}
+    for name, img_crop in quads.items():
+        preds = predict_image(img_crop, interpreter)
+        idx = np.argmax(preds); conf = np.max(preds) * 100
+        results[name] = {"label": CORN_CLASSES[idx], "conf": conf, "img": img_crop}
+    return results
+
+def get_smart_advice(disease, weed, weather, location):
     try:
         client = openai.OpenAI(api_key=st.secrets["openai_key"])
-        
-        # SAFEGUARD: Handle missing weather to prevent crash
-        if weather:
-            weather_txt = f"Temp: {weather['temp']}, Humidity: {weather['humidity']}, Rain: {weather['precip']}"
-            hum = weather.get('humidity', 'Unknown')
-            rain = weather.get('precip', 'Unknown')
-        else:
-            weather_txt = "Weather data unavailable"
-            hum = "Unknown"
-            rain = "Unknown"
-
-        prompt = f"""
-        You are an expert Agronomist AI.
-        CROP: Maize (Corn)
-        ISSUE DETECTED: {predicted_label}
-        LOCATION: {location if location else "Unknown"}
-        WEATHER: {weather_txt}
-        
-        TASK: Provide a concise management plan.
-        1. **DIAGNOSIS**: Confirm the issue.
-        2. **WEATHER IMPLICATION**: Can they spray chemicals given Humidity ({hum}) and Rain ({rain})?
-        3. **ACTION PLAN**:
-           - Recommend specific Fungicide/Herbicide.
-        4. **ORGANIC OPTION**: One non-chemical solution.
-        """
-        
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo", 
-            messages=[{"role": "user", "content": prompt}]
-        )
+        w_txt = f"Temp: {weather['temp']}, Hum: {weather['humidity']}, Rain: {weather['precip']}" if weather else "Weather unavailable"
+        issue = f"{disease} and {weed}" if disease and weed else (disease or weed or "Healthy")
+        prompt = f"Expert Agronomist Plan for Maize. Issue: {issue}. Location: {location}. Weather: {w_txt}. Provide: Diagnosis, Chemical Action Plan (safe for current weather?), and Organic Alternative. Bold key terms."
+        response = client.chat.completions.create(model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt}])
         return response.choices[0].message.content
-    except Exception as e: return f"AI Agronomist is offline. Error: {e}"
+    except Exception as e: return f"AI Offline. {e}"
 
-# --- MAIN APP UI ---
 st.sidebar.title("Maize-Doc")
-st.sidebar.markdown("---")
-
-# Default location to prevent empty input issues
-user_location = st.sidebar.text_input("Location", value="Hyderabad") 
-enable_ai = st.sidebar.checkbox("Enable AI Agronomist", value=True)
+user_location = st.sidebar.text_input("Location", value="Hyderabad")
+enable_ai = st.sidebar.checkbox("Enable AI Advice", value=True)
 
 st.header("Maize Health Analysis")
-
 uploaded_file = st.file_uploader("Upload Leaf Image", type=["jpg", "png", "jpeg"])
 
 if uploaded_file:
     col1, col2 = st.columns([1, 1])
-    
     with col1:
-        image = Image.open(uploaded_file)
-        st.image(image, caption='Uploaded Image', use_column_width=True)
-
+        img = Image.open(uploaded_file)
+        st.image(img, use_column_width=True)
     with col2:
-        # Fetch weather
-        weather_data = get_weather(user_location)
+        w_data = get_weather(user_location)
+        if w_data:
+            st.markdown(f'<div class="weather-card"><div><span style="font-size:40px;">{w_data["icon"]}</span></div><div><p class="weather-temp">{w_data["temp"]}</p><small>{w_data["condition"]}</small></div><div><small>Hum: {w_data["humidity"]}<br>Rain: {w_data["precip"]}</small></div></div>', unsafe_allow_html=True)
         
-        if weather_data:
-            st.markdown(f"""
-            <div class="weather-card">
-                <span style="font-size:40px; margin-right:15px;">{weather_data['icon']}</span>
-                <div>
-                    <h3 style="margin:0; color:#00796b;">{weather_data['temp']}</h3>
-                    <div style="color:#666;">{weather_data['condition']}</div>
-                    <small>Humidity: {weather_data['humidity']} | Rain: {weather_data['precip']}</small>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.info("⚠️ Weather unavailable. Proceeding with analysis.")
-
-        if st.button('Run Diagnosis'):
-            with st.spinner('Scanning crop (Fast Mode)...'):
-                interpreter = load_model()
-                if interpreter:
-                    # Single fast prediction
-                    preds = predict_image(image, interpreter)
-                    idx = np.argmax(preds)
-                    confidence = np.max(preds) * 100
-                    label = CORN_CLASSES[idx]
-                    
-                    # Colors
-                    color = "#28a745" if "Healthy" in label else "#dc3545"
-                    if "Weed" in label: color = "#fd7e14"
-                    
-                    # Display Result
-                    st.markdown(f"""
-                    <div class="result-box">
-                        <h2 style="color:{color}; margin:0;">{label}</h2>
-                        <p style="font-size:18px; color:#555;">Confidence: <b>{confidence:.1f}%</b></p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # AI Advice
-                    if enable_ai and "Healthy" not in label:
-                        with st.spinner("Consulting AI Agronomist..."):
-                            advice = get_smart_advice(label, weather_data, user_location)
-                            st.markdown(f"""
-                            <div class="advice-box">
-                                <h4>🤖 AI Agronomist Prescription</h4>
-                                {advice.replace(chr(10), '<br>')}
-                            </div>
-                            """, unsafe_allow_html=True)
-                    elif "Healthy" in label:
-                        st.success("✅ Crop is healthy! No action needed.")
+        if st.button('Run Quadrant Diagnosis'):
+            with st.spinner('Analyzing...'):
+                model = load_model()
+                res = analyze_quadrants(img, model)
+                q_cols = st.columns(2)
+                d_list, w_list = [], []
+                for i, (name, val) in enumerate(res.items()):
+                    with q_cols[i%2]:
+                        st.image(val['img'], width=150)
+                        lbl, cnf = val['label'], val['conf']
+                        clr = "#28a745" if "Healthy" in lbl else ("#fd7e14" if "Weed" in lbl else "#dc3545")
+                        st.markdown(f'<div class="result-box"><b style="color:{clr};">{lbl}</b><br><small>{cnf:.0f}%</small></div>', unsafe_allow_html=True)
+                        if "Healthy" not in lbl:
+                            if "Weed" in lbl: w_list.append(lbl)
+                            else: d_list.append(lbl)
+                
+                f_d = max(set(d_list), key=d_list.count) if d_list else None
+                f_w = max(set(w_list), key=w_list.count) if w_list else None
+                
+                if f_d or f_w:
+                    if enable_ai:
+                        with st.spinner("Consulting AI..."):
+                            advice = get_smart_advice(f_d, f_w, w_data, user_location)
+                            st.markdown(f'<div class="advice-box"><h4>🤖 AI Prescription</h4>{advice.replace(chr(10), "<br>")}</div>', unsafe_allow_html=True)
+                else: st.success("Crop appears Healthy")
