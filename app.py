@@ -1,4 +1,4 @@
-%%writefile maize-doctor/app.py
+
 import streamlit as st
 import tensorflow as tf
 import numpy as np
