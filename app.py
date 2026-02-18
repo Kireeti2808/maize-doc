@@ -12,44 +12,45 @@ st.set_page_config(page_title="Maize-Doc", layout="wide")
 
 st.markdown("""
     <style>
-    /* Universal Text Visibility: Deep Charcoal for maximum contrast */
-    .stApp, .main, .stMarkdown, p, span, h1, h2, h3, h4, li, div {
-        color: #000000 !important;
+    /* 1. Main Page Font: White */
+    .stApp, .main, .stMarkdown, p, span, h1, h2, h3, h4, li, div, label {
+        color: #FFFFFF !important;
     }
 
-    /* GLASSMORPHISM: Works on any background (Light or Dark) */
+    /* 2. Weather, Quadrant, and AI Advice Boxes: White background, Dark text */
     .weather-card, .quadrant-box, .advice-box {
-        background: rgba(255, 255, 255, 0.85) !important;
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        border: 2px solid rgba(0, 0, 0, 0.1) !important;
+        background-color: #FFFFFF !important;
+        border: 2px solid #E0E0E0 !important;
         border-radius: 15px;
         padding: 20px;
         margin-bottom: 20px;
-        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2) !important;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
     }
 
-    /* Specific fix for high-priority labels */
-    b, strong, .conf-text {
-        color: #000000 !important;
-        text-shadow: 0px 0px 1px rgba(255,255,255,1); /* Adds a tiny glow to keep it sharp */
+    /* Force DARK text inside these specific containers only */
+    .weather-card *, .quadrant-box *, .advice-box * {
+        color: #111111 !important;
+    }
+
+    /* Sidebar logic: White font */
+    [data-testid="stSidebar"] * {
+        color: #FFFFFF !important;
     }
 
     .stButton>button {
         border-radius: 20px;
         background-color: #1b5e20;
-        color: #ffffff !important;
+        color: #FFFFFF !important;
         font-weight: bold;
         border: none;
         width: 100%;
     }
 
-    /* Progress bar track visibility on any background */
     .bar-bg {
-        background-color: rgba(0, 0, 0, 0.1) !important;
+        background-color: #EEEEEE !important;
         height: 12px;
         border-radius: 6px;
-        border: 1px solid rgba(0, 0, 0, 0.2);
+        border: 1px solid #DDDDDD;
         overflow: hidden;
         margin: 10px 0;
     }
@@ -169,4 +170,6 @@ if uploaded_file:
                 if (f_d or f_w) and enable_ai:
                     with st.spinner("Consulting AI..."):
                         advice = get_smart_advice(f_d, f_w, w_data, user_city)
-                        st.markdown(f'<div class="advice-box"><h3 style="margin-top:0; color:#01579b !important;">🤖 AI Prescription</h3><div><b>{advice.replace(chr(10), "<br>")}</b></div></div>', unsafe_allow_html=True)
+                        st.markdown(f'<div class="advice-box"><h3 style="margin-top:0;">🤖 AI Prescription</h3><div><b>{advice.replace(chr(10), "<br>")}</b></div></div>', unsafe_allow_html=True)
+                elif not f_d and not f_w:
+                    st.success("Analysis complete: Your crop is Healthy!")
